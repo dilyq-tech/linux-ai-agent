@@ -283,23 +283,23 @@ sudo systemctl enable --now bot.service
 ---
 
 ## 📁 Структура проекта
-
-├── collector_agent.py    # агент: сбор метрик → отправка на хаб
-├── hub.py                # FastAPI-хаб: приём метрик от агентов
-├── collector.py          # локальный сборщик метрик → SQLite
-├── web.py                # веб-дашборд (FastAPI + Chart.js)
-├── bot.py                # Telegram-бот: алерты + 30+ команд
-├── full_control.py       # полное управление Linux (whitelist)
-├── control_handlers.py   # обработчики команд и кнопок бота
-├── log_analyzer.py       # AI-анализ системных логов
-├── analyzer.py           # standalone AI-анализ трендов
-├── agent.py              # терминальный ИИ-агент (чат + команды)
-├── manager.py            # управление сервисами/процессами/пакетами
-├── config.py             # секреты (НЕ попадает в git)
-├── Dockerfile            # образ для Docker
-├── docker-compose.yml    # hub + агенты + web + bot
-├── requirements.txt      # зависимости
-└── monitoring.db         # база метрик и очереди алертов
+...
+  ├── collector_agent.py    # агент: сбор метрик → отправка на хаб
+  ├── hub.py                # FastAPI-хаб: приём метрик от агентов
+  ├── collector.py          # локальный сборщик метрик → SQLite
+  ├── web.py                # веб-дашборд (FastAPI + Chart.js)
+  ├── bot.py                # Telegram-бот: алерты + 30+ команд
+  ├── full_control.py       # полное управление Linux (whitelist)
+  ├── control_handlers.py   # обработчики команд и кнопок бота
+  ├── log_analyzer.py       # AI-анализ системных логов
+  ├── analyzer.py           # standalone AI-анализ трендов
+  ├── agent.py              # терминальный ИИ-агент (чат + команды)
+  ├── manager.py            # управление сервисами/процессами/пакетами
+  ├── config.py             # секреты (НЕ попадает в git)
+  ├── Dockerfile            # образ для Docker
+  ├── docker-compose.yml    # hub + агенты + web + bot
+  ├── requirements.txt      # зависимости
+  └── monitoring.db         # база метрик и очереди алертов
 
 ---
 
