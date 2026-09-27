@@ -14,6 +14,8 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 from datetime import datetime
 from config import BOT_TOKEN, ADMIN_ID
 import manager
+import full_control
+from control_handlers import register_control_commands
 import log_analyzer
 
 apihelper.proxy = {"https": "http://127.0.0.1:12334"}
@@ -154,6 +156,14 @@ def create_main_keyboard():
         KeyboardButton(f"{E_GEAR} Процессы")
     )
     keyboard.add(
+        KeyboardButton("🖥 Терминал"),
+        KeyboardButton("👥 Пользователи")
+    )
+    keyboard.add(
+        KeyboardButton("🐳 Docker"),
+        KeyboardButton("🛡 Firewall")
+    )
+    keyboard.add(
         KeyboardButton(f"{E_WARN} Тест алерта"),
         KeyboardButton(f"{E_HELP} Справка")
     )
@@ -248,11 +258,32 @@ def cmd_trend(message):
               "\n\nОтветь ОЧЕНЬ кратко на русском (3-4 предложения): есть ли проблемы, общее состояние, рекомендации.")
     
     try:
+        print(f"🤖 Отправляю запрос к Ollama...")
         payload = {"model": MODEL, "prompt": prompt, "stream": False}
-        r = requests.post(OLLAMA_URL, json=payload, timeout=120)
-        analysis = r.json()["response"]
+        r = requests.post(OLLAMA_URL, json=payload, timeout=120, proxies={"http": None, "https": None})
+        print(f"📥 Ответ от Ollama: status={r.status_code}")
+        if r.status_code != 200:
+            analysis = f" Ollama вернул ошибку: {r.status_code}"
+        else:
+            try:
+                data = r.json()
+                analysis = data.get("response", "")
+                print(f"✅ AI ответил: {len(analysis)} символов")
+                if not analysis:
+                    analysis = "AI не вернул ответ"
+            except ValueError as e:
+                print(f"❌ JSON parse error: {e}")
+                print(f"Response text: {r.text[:200]}")
+                analysis = f"❌ Ollama вернул некорректный JSON: {str(e)}"
+    except requests.exceptions.ConnectionError as e:
+        print(f"❌ ConnectionError: {e}")
+        analysis = "🔴 Ollama не запущен. Выполни: ollama serve"
+    except requests.exceptions.Timeout as e:
+        print(f"⏳ Timeout: {e}")
+        analysis = "⏳ AI думает слишком долго. Попробуй позже."
     except Exception as e:
-        analysis = f"Ошибка связи с AI: {e}"
+        print(f"❌ Exception: {type(e).__name__}: {e}")
+        analysis = f"❌ Ошибка AI: {str(e)}"
     
     trend_text = f"{E_BOT} <b>AI-анализ трендов</b>\n\n{analysis}"
     bot.send_message(message.chat.id, trend_text, parse_mode="HTML")
@@ -497,6 +528,13 @@ def cmd_help(message):
         f"{E_GLOBE} /network — сетевая информация\n"
         f"{E_FOLDER} /dir &lt;путь&gt; — содержимое директории\n"
         f"{E_FILE} /read &lt;путь&gt; — прочитать файл\n\n"
+        f"<b>Полное управление:</b>\n"
+        f"🖥 /cmd &lt;команда&gt; — выполнить команду\n"
+        f"👥 /users — список пользователей\n"
+        f"🐳 /docker — управление контейнерами\n"
+        f"🛡 /firewall — управление фаерволом\n"
+        f"🔄 /updates — проверка и установка обновлений\n"
+        f"💾 /backup &lt;путь&gt; — создать резервную копию\n\n"
         f"<b>Алерты:</b>\n"
         f"{E_WARN} /test_alert — тестовый алерт\n"
         f"{E_CLIP} /queue — состояние очереди\n\n"
@@ -558,6 +596,18 @@ def alert_checker():
             elif cpu < CPU_THRESHOLD:
                 alert_state[key] = False
 
+
+
+# Регистрируем команды полного управления
+E_SHIELD = "\U0001F6E1\uFE0F"
+E_DOCKER = "\U0001F433"
+E_DISK = "\U0001F4BF"
+
+register_control_commands(
+    bot,
+    E_CROSS, E_CHECK, E_WARN, E_GEAR, E_FOLDER,
+    E_GLOBE, E_PACKAGE, E_SHIELD, E_DOCKER, E_DISK
+)
 
 if __name__ == "__main__":
     print(f"{E_ROCKET} Telegram-бот для мульти-серверного мониторинга запущен!")
