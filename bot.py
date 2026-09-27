@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI-Sysadmin: Telegram-бот для мульти-серверного мониторинга
+AI-Sysadmin: Telegram-бот для мульти-серверного мониторинга + управление Linux
 """
 
 import sqlite3
@@ -13,6 +13,8 @@ from telebot import apihelper
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 from datetime import datetime
 from config import BOT_TOKEN, ADMIN_ID
+import manager
+import log_analyzer
 
 apihelper.proxy = {"https": "http://127.0.0.1:12334"}
 
@@ -27,17 +29,41 @@ CPU_THRESHOLD = 95
 CHECK_INTERVAL = 300
 SENDER_INTERVAL = 30
 
+# Эмодзи как переменные
+E_BOT = "\U0001F916"
+E_CHART = "\U0001F4CA"
+E_SEARCH = "\U0001F50D"
+E_CLIP = "\U0001F4CB"
+E_WARN = "\u26A0\uFE0F"
+E_HELP = "\u2753"
+E_CROSS = "\u274C"
+E_GREEN = "\U0001F7E2"
+E_YELLOW = "\U0001F7E1"
+E_RED = "\U0001F534"
+E_INBOX = "\U0001F4E5"
+E_OUTBOX = "\U0001F4E4"
+E_HOURGLASS = "\u23F3"
+E_CHECK = "\u2705"
+E_ROCKET = "\U0001F680"
+E_GEAR = "\u2699\uFE0F"
+E_PACKAGE = "\U0001F4E6"
+E_GLOBE = "\U0001F310"
+E_FOLDER = "\U0001F4C1"
+E_FILE = "\U0001F4C4"
+E_KILL = "\U0001F4A5"
+E_WRENCH = "\U0001F527"
+
 bot = telebot.TeleBot(BOT_TOKEN)
 alert_state = {}
 
 
 def get_status_emoji(value, threshold):
     if value >= threshold:
-        return chr(0x1F534)
+        return E_RED
     elif value >= threshold * 0.8:
-        return chr(0x1F7E1)
+        return E_YELLOW
     else:
-        return chr(0x1F7E2)
+        return E_GREEN
 
 
 def init_queue():
@@ -60,7 +86,7 @@ def queue_alert(text):
                  (text, datetime.now().isoformat()))
     conn.commit()
     conn.close()
-    print(chr(0x1F4E5) + " Алерт в очереди:", text)
+    print(f"{E_INBOX} Алерт в очереди:", text)
 
 
 def sender_loop():
@@ -75,7 +101,7 @@ def sender_loop():
                 conn.execute("UPDATE alert_queue SET sent=1 WHERE id=?", (rid,))
                 conn.commit()
                 conn.close()
-                print(chr(0x1F4E4) + " Алерт доставлен:", text)
+                print(f"{E_OUTBOX} Алерт доставлен:", text)
         except Exception:
             pass
         time.sleep(SENDER_INTERVAL)
@@ -116,16 +142,20 @@ def get_latest_metrics(server=None):
 def create_main_keyboard():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     keyboard.add(
-        KeyboardButton(chr(0x1F4CA) + " Статус"),
-        KeyboardButton(chr(0x1F916) + " AI-анализ")
+        KeyboardButton(f"{E_CHART} Статус"),
+        KeyboardButton(f"{E_BOT} AI-анализ")
     )
     keyboard.add(
-        KeyboardButton(chr(0x1F50D) + " Логи"),
-        KeyboardButton(chr(0x1F4CB) + " Очередь")
+        KeyboardButton(f"{E_SEARCH} Логи"),
+        KeyboardButton(f"{E_CLIP} Очередь")
     )
     keyboard.add(
-        KeyboardButton(chr(0x26A0) + chr(0xFE0F) + " Тест алерта"),
-        KeyboardButton(chr(0x2753) + " Справка")
+        KeyboardButton(f"{E_WRENCH} Сервисы"),
+        KeyboardButton(f"{E_GEAR} Процессы")
+    )
+    keyboard.add(
+        KeyboardButton(f"{E_WARN} Тест алерта"),
+        KeyboardButton(f"{E_HELP} Справка")
     )
     return keyboard
 
@@ -133,28 +163,34 @@ def create_main_keyboard():
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
     welcome_text = (
-        chr(0x1F916) + " <b>AI-Sysadmin бот запущен!</b>\n\n"
-        "Я слежу за <b>несколькими серверами</b> и сам пишу, если что-то сломалось.\n\n"
-        "<b>Возможности:</b>\n"
-        chr(0x1F4CA) + " Мониторинг метрик в реальном времени\n"
-        chr(0x1F916) + " AI-анализ трендов и логов\n"
-        chr(0x26A0) + chr(0xFE0F) + " Автоматические алерты при проблемах\n"
-        chr(0x1F4E6) + " Офлайн-очередь (алерты не теряются)\n\n"
-        "<b>Используй кнопки ниже или команды:</b>"
+        f"{E_BOT} <b>AI-Sysadmin — Центр управления Linux</b>\n\n"
+        f"Я слежу за <b>несколькими серверами</b> и позволяю ими управлять.\n\n"
+        f"<b>Мониторинг:</b>\n"
+        f"{E_CHART} Метрики в реальном времени\n"
+        f"{E_BOT} AI-анализ трендов и логов\n"
+        f"{E_WARN} Автоматические алерты\n"
+        f"{E_INBOX} Офлайн-очередь\n\n"
+        f"<b>Управление:</b>\n"
+        f"{E_WRENCH} Сервисы systemd\n"
+        f"{E_GEAR} Процессы\n"
+        f"{E_PACKAGE} Пакеты\n"
+        f"{E_GLOBE} Сеть\n"
+        f"{E_FOLDER} Файлы\n\n"
+        f"<b>Используй кнопки или команды:</b>"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="HTML", reply_markup=create_main_keyboard())
 
 
 @bot.message_handler(commands=["status"])
-@bot.message_handler(func=lambda message: message.text == chr(0x1F4CA) + " Статус")
+@bot.message_handler(func=lambda message: message.text == f"{E_CHART} Статус")
 def cmd_status(message):
     servers = get_servers()
     
     if not servers:
-        bot.reply_to(message, chr(0x274C) + " База пуста. Проверь сервисы collector")
+        bot.reply_to(message, f"{E_CROSS} База пуста. Проверь сервисы collector")
         return
     
-    status_text = chr(0x1F4CA) + " <b>Статус серверов</b>\n\n"
+    status_text = f"{E_CHART} <b>Статус серверов</b>\n\n"
     
     for server in servers:
         row = get_latest_metrics(server)
@@ -174,13 +210,13 @@ def cmd_status(message):
 
 
 @bot.message_handler(commands=["trend"])
-@bot.message_handler(func=lambda message: message.text == chr(0x1F916) + " AI-анализ")
+@bot.message_handler(func=lambda message: message.text == f"{E_BOT} AI-анализ")
 def cmd_trend(message):
-    bot.reply_to(message, chr(0x1F916) + " Анализирую тренды через AI... (10-20 сек)")
+    bot.reply_to(message, f"{E_BOT} Анализирую тренды через AI... (10-20 сек)")
     
     servers = get_servers()
     if not servers:
-        bot.reply_to(message, chr(0x1F4E6) + " База пуста. Проверь сервисы collector")
+        bot.reply_to(message, f"{E_INBOX} База пуста. Проверь сервисы collector")
         return
     
     all_history = []
@@ -202,7 +238,7 @@ def cmd_trend(message):
                 all_history.append(f"{srv} | {ts[11:16]} | CPU: {cpu}% | RAM: {ram}% | Disk: {disk}%")
     
     if not all_history:
-        bot.reply_to(message, chr(0x1F4E6) + " База пуста. Проверь сервисы collector")
+        bot.reply_to(message, f"{E_INBOX} База пуста. Проверь сервисы collector")
         return
     
     history = "\n".join(all_history[-20:])
@@ -216,36 +252,218 @@ def cmd_trend(message):
         r = requests.post(OLLAMA_URL, json=payload, timeout=120)
         analysis = r.json()["response"]
     except Exception as e:
-        analysis = "Ошибка связи с AI: " + str(e)
+        analysis = f"Ошибка связи с AI: {e}"
     
-    trend_text = chr(0x1F916) + " <b>AI-анализ трендов</b>\n\n" + analysis
+    trend_text = f"{E_BOT} <b>AI-анализ трендов</b>\n\n{analysis}"
     bot.send_message(message.chat.id, trend_text, parse_mode="HTML")
 
 
 @bot.message_handler(commands=["logs"])
-@bot.message_handler(func=lambda message: message.text == chr(0x1F50D) + " Логи")
+@bot.message_handler(func=lambda message: message.text == f"{E_SEARCH} Логи")
 def cmd_logs(message):
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, "r") as f:
             content = f.read()
         if content.strip():
-            log_text = chr(0x1F50D) + " <b>Анализ системных логов</b>\n\n" + content[:1500]
+            log_text = f"{E_SEARCH} <b>Анализ системных логов</b>\n\n{content[:1500]}"
             bot.send_message(message.chat.id, log_text, parse_mode="HTML")
         else:
-            bot.reply_to(message, chr(0x23F3) + " Файл анализа пуст. Подожди 10 минут.")
+            bot.reply_to(message, f"{E_HOURGLASS} Файл анализа пуст. Подожди 10 минут.")
     else:
-        bot.reply_to(message, chr(0x1F50D) + " Анализ логов ещё не запускался. Подожди 10 минут.")
+        bot.reply_to(message, f"{E_SEARCH} Анализ логов ещё не запускался. Подожди 10 минут.")
+
+
+@bot.message_handler(commands=["services"])
+@bot.message_handler(func=lambda message: message.text == f"{E_WRENCH} Сервисы")
+def cmd_services(message):
+    bot.reply_to(message, f"{E_WRENCH} Загружаю список сервисов...")
+    
+    services = manager.LinuxManager.list_services(15)
+    
+    if 'error' in services[0]:
+        bot.send_message(message.chat.id, f"{E_CROSS} Ошибка: {services[0]['error']}")
+        return
+    
+    text = f"{E_WRENCH} <b>Системные сервисы</b>\n\n"
+    for s in services[:10]:
+        status_emoji = E_GREEN if s['active'] == 'active' else E_RED
+        text += f"{status_emoji} <b>{s['name']}</b>\n"
+        text += f"   Статус: {s['active']} ({s['sub']})\n"
+        text += f"   {s['description'][:50]}\n\n"
+    
+    text += "\n<i>Используй /service_status &lt;имя&gt; для деталей</i>"
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
+
+
+@bot.message_handler(commands=["service_status"])
+def cmd_service_status(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, f"{E_CROSS} Использование: /service_status &lt;имя_сервиса&gt;\n\nПример: /service_status ssh")
+        return
+    
+    service_name = args[1]
+    bot.reply_to(message, f"⏳ Проверяю статус {service_name}...")
+    
+    status = manager.LinuxManager.service_status(service_name)
+    
+    if 'error' in status:
+        bot.send_message(message.chat.id, f"{E_CROSS} {status['error']}")
+        return
+    
+    text = f"🔧 <b>Статус сервиса: {status['name']}</b>\n\n"
+    text += f"Статус: {'🟢 Активен' if status['status'] == 'active' else '🔴 Неактивен'}\n\n"
+    text += f"<pre>{status['output'][:500]}</pre>"
+    
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
+
+
+@bot.message_handler(commands=["processes"])
+@bot.message_handler(func=lambda message: message.text == f"{E_GEAR} Процессы")
+def cmd_processes(message):
+    bot.reply_to(message, f"{E_GEAR} Загружаю список процессов...")
+    
+    processes = manager.LinuxManager.top_processes(15)
+    
+    if 'error' in processes[0]:
+        bot.send_message(message.chat.id, f"{E_CROSS} Ошибка: {processes[0]['error']}")
+        return
+    
+    text = f"{E_GEAR} <b>Топ процессов по CPU</b>\n\n"
+    for p in processes[:10]:
+        text += f"🔹 PID <b>{p['pid']}</b>\n"
+        text += f"   CPU: {p['cpu']}% | RAM: {p['mem']}%\n"
+        text += f"   {p['command'][:60]}\n\n"
+    
+    text += "\n<i>Используй /kill &lt;PID&gt; для завершения процесса</i>"
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
+
+
+@bot.message_handler(commands=["kill"])
+def cmd_kill(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, f"{E_CROSS} Использование: /kill &lt;PID&gt;\n\nПример: /kill 1234")
+        return
+    
+    try:
+        pid = int(args[1])
+    except ValueError:
+        bot.reply_to(message, f"{E_CROSS} PID должен быть числом")
+        return
+    
+    bot.reply_to(message, f"⏳ Завершаю процесс {pid}...")
+    
+    result = manager.LinuxManager.kill_process(pid)
+    
+    if 'error' in result:
+        bot.send_message(message.chat.id, f"{E_CROSS} {result['error']}")
+        return
+    
+    emoji = E_CHECK if result['success'] else E_CROSS
+    text = f"{emoji} <b>Процесс {pid}</b>\n\n"
+    text += f"Сигнал: {result['signal']}\n"
+    text += f"Успешно: {result['success']}"
+    
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
+
+
+@bot.message_handler(commands=["packages"])
+def cmd_packages(message):
+    args = message.text.split()
+    search = args[1] if len(args) > 1 else None
+    
+    bot.reply_to(message, f"{E_PACKAGE} Загружаю список пакетов...")
+    
+    packages = manager.LinuxManager.list_packages(search, 20)
+    
+    if 'error' in packages[0]:
+        bot.send_message(message.chat.id, f"{E_CROSS} Ошибка: {packages[0]['error']}")
+        return
+    
+    text = f"{E_PACKAGE} <b>Установленные пакеты</b>"
+    if search:
+        text += f" (поиск: {search})"
+    text += "\n\n"
+    
+    for pkg in packages[:15]:
+        status_emoji = E_CHECK if pkg['status'] == 'ii' else ""
+        text += f"{status_emoji} <b>{pkg['name']}</b>\n"
+        text += f"   Версия: {pkg['version']}\n"
+        text += f"   {pkg['description'][:50]}\n\n"
+    
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
+
+
+@bot.message_handler(commands=["network"])
+def cmd_network(message):
+    bot.reply_to(message, f"{E_GLOBE} Загружаю сетевую информацию...")
+    
+    net_info = manager.LinuxManager.network_info()
+    
+    if 'error' in net_info:
+        bot.send_message(message.chat.id, f"{E_CROSS} {net_info['error']}")
+        return
+    
+    text = f"{E_GLOBE} <b>Сетевая информация</b>\n\n"
+    text += "<b>Интерфейсы:</b>\n"
+    text += f"<pre>{net_info['interfaces'][:500]}</pre>\n\n"
+    text += "<b>Открытые порты:</b>\n"
+    text += f"<pre>{net_info['listening_ports'][:500]}</pre>"
+    
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
+
+
+@bot.message_handler(commands=["dir"])
+def cmd_dir(message):
+    args = message.text.split()
+    path = args[1] if len(args) > 1 else '/home'
+    
+    bot.reply_to(message, f"⏳ Загружаю содержимое {path}...")
+    
+    result = manager.LinuxManager.list_directory(path)
+    
+    if 'error' in result:
+        bot.send_message(message.chat.id, f"{E_CROSS} {result['error']}")
+        return
+    
+    text = f"{E_FOLDER} <b>Содержимое {path}</b>\n\n"
+    text += f"<pre>{result['content'][:1000]}</pre>"
+    
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
+
+
+@bot.message_handler(commands=["read"])
+def cmd_read(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, f"{E_CROSS} Использование: /read &lt;путь_к_файлу&gt;\n\nПример: /read /var/log/syslog")
+        return
+    
+    path = args[1]
+    bot.reply_to(message, f"⏳ Читаю {path}...")
+    
+    result = manager.LinuxManager.read_file(path, 50)
+    
+    if 'error' in result:
+        bot.send_message(message.chat.id, f"{E_CROSS} {result['error']}")
+        return
+    
+    text = f"{E_FILE} <b>Файл: {path}</b>\n\n"
+    text += f"<pre>{result['content'][:1500]}</pre>"
+    
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
 
 
 @bot.message_handler(commands=["test_alert"])
-@bot.message_handler(func=lambda message: message.text == chr(0x26A0) + chr(0xFE0F) + " Тест алерта")
+@bot.message_handler(func=lambda message: message.text == f"{E_WARN} Тест алерта")
 def cmd_test_alert(message):
-    queue_alert(chr(0x26A0) + chr(0xFE0F) + " <b>ТЕСТОВЫЙ АЛЕРТ:</b> диск заполнен на 93%! (проверка очереди)")
-    bot.reply_to(message, chr(0x2705) + " Алерт положен в очередь. Доставка в течение 30 сек.")
+    queue_alert(f"{E_WARN} <b>ТЕСТОВЫЙ АЛЕРТ:</b> диск заполнен на 93%! (проверка очереди)")
+    bot.reply_to(message, f"{E_CHECK} Алерт положен в очередь. Доставка в течение 30 сек.")
 
 
 @bot.message_handler(commands=["queue"])
-@bot.message_handler(func=lambda message: message.text == chr(0x1F4CB) + " Очередь")
+@bot.message_handler(func=lambda message: message.text == f"{E_CLIP} Очередь")
 def cmd_queue(message):
     conn = sqlite3.connect(DB_NAME)
     total = conn.execute("SELECT COUNT(*) FROM alert_queue").fetchone()[0]
@@ -253,32 +471,43 @@ def cmd_queue(message):
     conn.close()
     
     queue_text = (
-        f"{chr(0x1F4CB)} <b>Очередь алертов</b>\n\n"
-        f"{chr(0x1F4CA)} Всего за всё время: <b>{total}</b>\n"
-        f"{chr(0x23F3)} Ожидают отправки: <b>{pending}</b>\n"
-        f"{chr(0x2705)} Доставлено: <b>{total - pending}</b>"
+        f"{E_CLIP} <b>Очередь алертов</b>\n\n"
+        f"{E_CHART} Всего за всё время: <b>{total}</b>\n"
+        f"{E_HOURGLASS} Ожидают отправки: <b>{pending}</b>\n"
+        f"{E_CHECK} Доставлено: <b>{total - pending}</b>"
     )
     bot.send_message(message.chat.id, queue_text, parse_mode="HTML")
 
 
 @bot.message_handler(commands=["help"])
-@bot.message_handler(func=lambda message: message.text == chr(0x2753) + " Справка")
+@bot.message_handler(func=lambda message: message.text == f"{E_HELP} Справка")
 def cmd_help(message):
     help_text = (
-        f"{chr(0x2753)} <b>Справка по боту</b>\n\n"
-        "<b>Команды:</b>\n"
-        f"{chr(0x1F4CA)} /status — статус всех серверов\n"
-        f"{chr(0x1F916)} /trend — AI-анализ трендов\n"
-        f"{chr(0x1F50D)} /logs — анализ системных логов\n"
-        f"{chr(0x26A0)}{chr(0xFE0F)} /test_alert — тестовый алерт\n"
-        f"{chr(0x1F4CB)} /queue — состояние очереди\n\n"
-        "<b>Алерты срабатывают когда:</b>\n"
-        f"{chr(0x1F534)} Диск > 85%\n"
-        f"{chr(0x1F534)} RAM > 90%\n"
-        f"{chr(0x1F534)} CPU > 95%\n\n"
-        "<b>Особенности:</b>\n"
-        f"{chr(0x1F4E6)} Без сети алерты НЕ теряются — они ждут в очереди\n"
-        f"{chr(0x1F916)} AI анализирует тренды и логи на аномалии"
+        f"{E_HELP} <b>Справка по боту</b>\n\n"
+        f"<b>Мониторинг:</b>\n"
+        f"{E_CHART} /status — статус всех серверов\n"
+        f"{E_BOT} /trend — AI-анализ трендов\n"
+        f"{E_SEARCH} /logs — анализ системных логов\n\n"
+        f"<b>Управление:</b>\n"
+        f"{E_WRENCH} /services — список сервисов\n"
+        f"/service_status &lt;имя&gt; — статус сервиса\n"
+        f"{E_GEAR} /processes — топ процессов\n"
+        f"{E_KILL} /kill &lt;PID&gt; — завершить процесс\n"
+        f"{E_PACKAGE} /packages — установленные пакеты\n"
+        f"{E_GLOBE} /network — сетевая информация\n"
+        f"{E_FOLDER} /dir &lt;путь&gt; — содержимое директории\n"
+        f"{E_FILE} /read &lt;путь&gt; — прочитать файл\n\n"
+        f"<b>Алерты:</b>\n"
+        f"{E_WARN} /test_alert — тестовый алерт\n"
+        f"{E_CLIP} /queue — состояние очереди\n\n"
+        f"<b>Алерты срабатывают когда:</b>\n"
+        f"{E_RED} Диск > 85%\n"
+        f"{E_RED} RAM > 90%\n"
+        f"{E_RED} CPU > 95%\n"
+        f"{E_WARN} Collector молчит > 15 минут\n\n"
+        f"<b>Особенности:</b>\n"
+        f"{E_INBOX} Без сети алерты НЕ теряются — они ждут в очереди\n"
+        f"{E_BOT} AI анализирует тренды и логи на аномалии"
     )
     bot.send_message(message.chat.id, help_text, parse_mode="HTML")
 
@@ -303,35 +532,35 @@ def alert_checker():
             
             key = f"{srv_name}_collector"
             if age_min > 15 and not alert_state.get(key, False):
-                queue_alert(f"{chr(0x26A0)}{chr(0xFE0F)} <b>{srv_name}:</b> нет свежих метрик {int(age_min)} мин")
+                queue_alert(f"{E_WARN} <b>{srv_name}:</b> нет свежих метрик {int(age_min)} мин")
                 alert_state[key] = True
             elif age_min <= 15:
                 alert_state[key] = False
             
             key = f"{srv_name}_disk"
             if disk >= DISK_THRESHOLD and not alert_state.get(key, False):
-                queue_alert(f"{chr(0x1F534)} <b>{srv_name}:</b> ДИСК заполнен на {disk:.1f}%!")
+                queue_alert(f"{E_RED} <b>{srv_name}:</b> ДИСК заполнен на {disk:.1f}%!")
                 alert_state[key] = True
             elif disk < DISK_THRESHOLD:
                 alert_state[key] = False
             
             key = f"{srv_name}_ram"
             if ram >= RAM_THRESHOLD and not alert_state.get(key, False):
-                queue_alert(f"{chr(0x1F534)} <b>{srv_name}:</b> RAM загружена на {ram:.1f}%!")
+                queue_alert(f"{E_RED} <b>{srv_name}:</b> RAM загружена на {ram:.1f}%!")
                 alert_state[key] = True
             elif ram < RAM_THRESHOLD:
                 alert_state[key] = False
             
             key = f"{srv_name}_cpu"
             if cpu >= CPU_THRESHOLD and not alert_state.get(key, False):
-                queue_alert(f"{chr(0x1F534)} <b>{srv_name}:</b> CPU загружен на {cpu:.1f}%!")
+                queue_alert(f"{E_RED} <b>{srv_name}:</b> CPU загружен на {cpu:.1f}%!")
                 alert_state[key] = True
             elif cpu < CPU_THRESHOLD:
                 alert_state[key] = False
 
 
 if __name__ == "__main__":
-    print(chr(0x1F680) + " Telegram-бот для мульти-серверного мониторинга запущен!")
+    print(f"{E_ROCKET} Telegram-бот для мульти-серверного мониторинга запущен!")
     init_queue()
     threading.Thread(target=alert_checker, daemon=True).start()
     threading.Thread(target=sender_loop, daemon=True).start()
