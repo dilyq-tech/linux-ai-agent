@@ -213,17 +213,19 @@ sudo systemctl enable --now bot.service
 
 ## 📁 Структура проекта
 
-```text
-├── agent.py         # терминальный ИИ-агент (Router + Tools + история)
-├── collector.py     # фоновый сборщик метрик → SQLite
-├── analyzer.py      # standalone AI-анализ трендов
-├── bot.py           # Telegram-бот + офлайн-очередь алертов
-├── config.py        # секреты (НЕ попадает в git)
-├── requirements.txt # зависимости
-└── monitoring.db    # база метрик и очереди алертов
-```
+| 🧠 Ядро системы | 🎛 Управление Linux |
+|---|---|
+| `collector_agent.py` — агент: сбор метрик → хаб | `full_control.py` — полное управление (whitelist) |
+| `hub.py` — FastAPI-хаб: приём метрик от агентов | `control_handlers.py` — обработчики команд и кнопок |
+| `collector.py` — локальный сборщик → SQLite | `manager.py` — сервисы / процессы / пакеты |
+| `monitoring.db` — база метрик и очереди алертов | `log_analyzer.py` — AI-анализ системных логов |
 
----
+| 🌐 Интерфейсы | 🐳 Деплой |
+|---|---|
+| `bot.py` — Telegram-бот: алерты + 30+ команд | `Dockerfile` — образ для Docker |
+| `web.py` — веб-дашборд (FastAPI + Chart.js) | `docker-compose.yml` — hub + агенты + web + bot |
+| `agent.py` — терминальный ИИ-агент | systemd-юниты — автозапуск сервисов |
+| `analyzer.py` — standalone AI-анализ трендов | `config.py` — секреты (НЕ в git) |
 
 ## 💡 Пример работы
 
