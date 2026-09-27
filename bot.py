@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI-Sysadmin: Telegram-бот с автоматическими алертами
-Синхронная версия на telebot (без aiohttp)
+AI-Sysadmin: Telegram-бот с авто-алертами и офлайн-очередью
+Без сети алерты копятся в SQLite, при появлении сети (VPN) доставляются сами
 """
 
 import sqlite3
@@ -10,8 +10,11 @@ import time
 import threading
 import requests
 import telebot
+from telebot import apihelper
 from datetime import datetime
 from config import BOT_TOKEN, ADMIN_ID
+
+apihelper.proxy = {"https": "http://127.0.0.1:12334"}
 
 DB_NAME = "monitoring.db"
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -20,13 +23,54 @@ MODEL = "qwen2.5:3b"
 DISK_THRESHOLD = 85
 RAM_THRESHOLD = 90
 CPU_THRESHOLD = 95
-CHECK_INTERVAL = 300  # 5 минут
-
-from telebot import apihelper
-apihelper.proxy = {"https": "http://127.0.0.1:12334"}
+CHECK_INTERVAL = 300     # проверка метрик: 5 минут
+SENDER_INTERVAL = 30    # попытка отправить очередь: 30 секунд
 
 bot = telebot.TeleBot(BOT_TOKEN)
 alert_state = {"disk": False, "ram": False, "cpu": False, "collector": False}
+
+
+def init_queue():
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS alert_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            sent INTEGER DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def queue_alert(text):
+    """Положить алерт в очередь (работает без сети)"""
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("INSERT INTO alert_queue (text, created_at, sent) VALUES (?, ?, 0)",
+                 (text, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    print("📥 Алерт в очереди:", text)
+
+
+def sender_loop():
+    """Фоновый поток: пытается отправить очередь каждые 30 сек"""
+    while True:
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            rows = conn.execute("SELECT id, text FROM alert_queue WHERE sent=0 ORDER BY id LIMIT 10").fetchall()
+            conn.close()
+            for rid, text in rows:
+                bot.send_message(ADMIN_ID, text)
+                conn = sqlite3.connect(DB_NAME)
+                conn.execute("UPDATE alert_queue SET sent=1 WHERE id=?", (rid,))
+                conn.commit()
+                conn.close()
+                print("📤 Алерт доставлен:", text)
+        except Exception:
+            pass  # сети нет — попробуем через 30 сек
+        time.sleep(SENDER_INTERVAL)
 
 
 def get_latest_metrics():
@@ -70,11 +114,13 @@ def ask_ollama(prompt):
 def cmd_start(message):
     bot.reply_to(message,
         "AI-Sysadmin бот запущен!\n\n"
-        "Я слежу за твоим сервером и сам пишу, если что-то сломалось.\n\n"
+        "Я слежу за сервером даже офлайн: алерты копятся в очереди "
+        "и приходят, как только появляется сеть.\n\n"
         "Команды:\n"
         "/status - текущие метрики\n"
         "/trend - AI-анализ трендов\n"
         "/test_alert - тестовый алерт\n"
+        "/queue - состояние очереди алертов\n"
         "/help - справка")
 
 
@@ -82,7 +128,7 @@ def cmd_start(message):
 def cmd_status(message):
     row = get_latest_metrics()
     if not row:
-        bot.reply_to(message, "База пуста. Сначала запусти collector.py")
+        bot.reply_to(message, "База пуста. Проверь сервис collector")
         return
     ts, cpu, ram, disk = row
     bot.reply_to(message,
@@ -98,7 +144,7 @@ def cmd_trend(message):
     bot.reply_to(message, "Анализирую тренды через AI... (10-20 сек)")
     history = get_recent_history(10)
     if not history:
-        bot.reply_to(message, "База пуста. Сначала запусти collector.py")
+        bot.reply_to(message, "База пуста. Проверь сервис collector")
         return
     prompt = ("Ты AI-аналитик мониторинга сервера. Кратко проанализируй метрики:\n\n"
               + history +
@@ -109,11 +155,20 @@ def cmd_trend(message):
 
 @bot.message_handler(commands=["test_alert"])
 def cmd_test_alert(message):
-    try:
-        bot.send_message(ADMIN_ID, "⚠️ ТЕСТОВЫЙ АЛЕРТ: диск заполнен на 93%! (это проверка системы алертов)")
-        bot.reply_to(message, "Тестовый алерт отправлен!")
-    except Exception as e:
-        bot.reply_to(message, "Ошибка отправки алерта: " + str(e))
+    queue_alert("⚠️ ТЕСТОВЫЙ АЛЕРТ: диск заполнен на 93%! (проверка очереди)")
+    bot.reply_to(message, "Алерт положен в очередь. Доставка в течение 30 сек, если есть сеть.")
+
+
+@bot.message_handler(commands=["queue"])
+def cmd_queue(message):
+    conn = sqlite3.connect(DB_NAME)
+    total = conn.execute("SELECT COUNT(*) FROM alert_queue").fetchone()[0]
+    pending = conn.execute("SELECT COUNT(*) FROM alert_queue WHERE sent=0").fetchone()[0]
+    conn.close()
+    bot.reply_to(message,
+        "Очередь алертов:\n"
+        "Всего за всё время: " + str(total) + "\n"
+        "Ожидают отправки: " + str(pending))
 
 
 @bot.message_handler(commands=["help"])
@@ -122,14 +177,16 @@ def cmd_help(message):
         "Справка:\n"
         "/status - текущие метрики\n"
         "/trend - AI-анализ трендов\n"
-        "/test_alert - тестовый алерт\n\n"
-        "Алерты приходят АВТОМАТИЧЕСКИ когда:\n"
+        "/test_alert - тестовый алерт\n"
+        "/queue - состояние очереди\n\n"
+        "Алерты срабатывают когда:\n"
         "диск > 85%, RAM > 90%, CPU > 95%\n"
-        "или если collector.py не работает > 15 минут")
+        "или collector молчит > 15 минут\n\n"
+        "Без сети алерты НЕ теряются — они ждут в очереди.")
 
 
 def alert_checker():
-    """Фоновый поток: проверяет метрики и шлет алерты"""
+    """Фоновый поток: проверяет метрики и кладет алерты в очередь"""
     while True:
         time.sleep(CHECK_INTERVAL)
         row = get_latest_metrics()
@@ -143,41 +200,34 @@ def alert_checker():
         except Exception:
             age_min = 0
 
-        alerts = []
         if age_min > 15 and not alert_state["collector"]:
-            alerts.append("⚠️ Collector не работает: нет свежих метрик " + str(int(age_min)) + " мин. Запусти collector.py")
+            queue_alert("⚠️ Collector не работает: нет свежих метрик " + str(int(age_min)) + " мин")
             alert_state["collector"] = True
         elif age_min <= 15:
             alert_state["collector"] = False
 
         if disk >= DISK_THRESHOLD and not alert_state["disk"]:
-            alerts.append("⚠️ ДИСК заполнен на " + str(disk) + "%! Порог: " + str(DISK_THRESHOLD) + "%")
+            queue_alert("⚠️ ДИСК заполнен на " + str(disk) + "%! Порог: " + str(DISK_THRESHOLD) + "%")
             alert_state["disk"] = True
         elif disk < DISK_THRESHOLD:
             alert_state["disk"] = False
 
         if ram >= RAM_THRESHOLD and not alert_state["ram"]:
-            alerts.append("⚠️ RAM загружена на " + str(ram) + "%! Порог: " + str(RAM_THRESHOLD) + "%")
+            queue_alert("⚠️ RAM загружена на " + str(ram) + "%! Порог: " + str(RAM_THRESHOLD) + "%")
             alert_state["ram"] = True
         elif ram < RAM_THRESHOLD:
             alert_state["ram"] = False
 
         if cpu >= CPU_THRESHOLD and not alert_state["cpu"]:
-            alerts.append("⚠️ CPU загружен на " + str(cpu) + "%! Порог: " + str(CPU_THRESHOLD) + "%")
+            queue_alert("⚠️ CPU загружен на " + str(cpu) + "%! Порог: " + str(CPU_THRESHOLD) + "%")
             alert_state["cpu"] = True
         elif cpu < CPU_THRESHOLD:
             alert_state["cpu"] = False
 
-        for a in alerts:
-            try:
-                bot.send_message(ADMIN_ID, a)
-            except Exception as e:
-                print("Ошибка отправки алерта:", e)
-
 
 if __name__ == "__main__":
-    print("🚀 Telegram-бот с алертами запущен!")
-    print("Для остановки: Ctrl+C")
-    t = threading.Thread(target=alert_checker, daemon=True)
-    t.start()
+    print("🚀 Telegram-бот с офлайн-очередью запущен!")
+    init_queue()
+    threading.Thread(target=alert_checker, daemon=True).start()
+    threading.Thread(target=sender_loop, daemon=True).start()
     bot.infinity_polling()
