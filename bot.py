@@ -15,7 +15,7 @@ from datetime import datetime
 from config import BOT_TOKEN, ADMIN_ID
 import manager
 import full_control
-from control_handlers import register_control_commands
+from control_handlers import register_all_handlers
 import log_analyzer
 
 apihelper.proxy = {"https": "http://127.0.0.1:12334"}
@@ -164,7 +164,13 @@ def create_main_keyboard():
         KeyboardButton("🛡 Firewall")
     )
     keyboard.add(
-        KeyboardButton(f"{E_WARN} Тест алерта"),
+        KeyboardButton("🌐 Сеть"),
+        KeyboardButton("📶 Wi-Fi")
+    )
+    keyboard.add(
+        KeyboardButton(f"{E_WARN} Тест алерта")
+    )
+    keyboard.add(
         KeyboardButton(f"{E_HELP} Справка")
     )
     return keyboard
@@ -603,11 +609,19 @@ E_SHIELD = "\U0001F6E1\uFE0F"
 E_DOCKER = "\U0001F433"
 E_DISK = "\U0001F4BF"
 
-register_control_commands(
+register_all_handlers(
     bot,
     E_CROSS, E_CHECK, E_WARN, E_GEAR, E_FOLDER,
     E_GLOBE, E_PACKAGE, E_SHIELD, E_DOCKER, E_DISK
 )
+
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
     print(f"{E_ROCKET} Telegram-бот для мульти-серверного мониторинга запущен!")

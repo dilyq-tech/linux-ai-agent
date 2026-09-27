@@ -381,6 +381,93 @@ class FullControl:
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
+
+    @staticmethod
+    def network_info() -> Dict:
+        """Получить сетевую информацию"""
+        try:
+            ip_result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, timeout=10)
+            ports_result = subprocess.run(['ss', '-tuln'], capture_output=True, text=True, timeout=10)
+            conn_result = subprocess.run(['ss', '-tunp'], capture_output=True, text=True, timeout=10)
+            return {
+                'interfaces': ip_result.stdout[:1000],
+                'listening_ports': ports_result.stdout[:1000],
+                'active_connections': conn_result.stdout[:1000]
+            }
+        except Exception as e:
+            return {'error': str(e)}
+
+
+    @staticmethod
+    def wifi_info() -> Dict:
+        """Получить информацию о Wi-Fi"""
+        try:
+            # Проверяем есть ли Wi-Fi интерфейсы
+            iw_result = subprocess.run(['iw', 'dev'], capture_output=True, text=True, timeout=10)
+            
+            if 'Interface' not in iw_result.stdout:
+                return {'error': 'Wi-Fi интерфейс не найден'}
+            
+            # Находим Wi-Fi интерфейс
+            wifi_interface = None
+            for line in iw_result.stdout.split('\n'):
+                if 'Interface' in line:
+                    wifi_interface = line.split()[1]
+                    break
+            
+            if not wifi_interface:
+                return {'error': 'Wi-Fi интерфейс не найден'}
+            
+            # Получаем информацию о подключении
+            link_result = subprocess.run(['iw', 'dev', wifi_interface, 'link'], capture_output=True, text=True, timeout=10)
+            
+            # Получаем список доступных сетей
+            scan_result = subprocess.run(['iw', 'dev', wifi_interface, 'scan', 'ap-force'], capture_output=True, text=True, timeout=30)
+            
+            # Парсим сканирование
+            networks = []
+            current_ssid = None
+            current_signal = None
+            current_freq = None
+            
+            for line in scan_result.stdout.split('\n'):
+                if line.startswith('BSS'):
+                    if current_ssid:
+                        networks.append({
+                            'ssid': current_ssid,
+                            'signal': current_signal,
+                            'freq': current_freq
+                        })
+                    current_ssid = None
+                    current_signal = None
+                    current_freq = None
+                elif 'SSID:' in line and 'SSID:' in line.split(':')[0]:
+                    current_ssid = line.split(':', 1)[1].strip()
+                elif 'signal:' in line:
+                    current_signal = line.split(':')[1].strip().split()[0] + ' dBm'
+                elif 'freq:' in line:
+                    current_freq = line.split(':')[1].strip().split()[0] + ' MHz'
+            
+            if current_ssid:
+                networks.append({
+                    'ssid': current_ssid,
+                    'signal': current_signal,
+                    'freq': current_freq
+                })
+            
+            # Сортируем по сигналу
+            networks.sort(key=lambda x: x.get('signal', '-999 dBm'), reverse=True)
+            
+            return {
+                'interface': wifi_interface,
+                'link_info': link_result.stdout,
+                'networks': networks[:10]  # Топ-10 сетей
+            }
+        except subprocess.TimeoutExpired:
+            return {'error': 'Сканирование Wi-Fi заняло слишком много времени'}
+        except Exception as e:
+            return {'error': str(e)}
+
     @staticmethod
     def disk_info() -> Dict:
         """Получить информацию о дисках"""
