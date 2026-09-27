@@ -173,7 +173,7 @@ sudo systemctl enable --now bot.service
 ## 🗺 Roadmap
 
 - [x] 🐳 Docker-упаковка (collector + bot + ollama одной командой)
-- [ ] 📊 Веб-дашборд с графиками (FastAPI + Chart.js)
+- [x] 📊 Веб-дашборд с графиками (FastAPI + Chart.js)
 - [ ] 🔍 Анализ логов на аномалии
 - [ ] 🌐 Мульти-серверный мониторинг
 
