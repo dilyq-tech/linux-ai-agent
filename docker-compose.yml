@@ -1,11 +1,35 @@
 services:
-  collector:
+  hub:
     build: .
-    command: python collector.py
+    command: python hub.py
     network_mode: host
     restart: unless-stopped
     volumes:
       - ./monitoring.db:/app/monitoring.db
+
+  server-1:
+    build: .
+    command: python collector_agent.py
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - SERVER_NAME=web-server-1
+
+  server-2:
+    build: .
+    command: python collector_agent.py
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - SERVER_NAME=database-server-2
+
+  server-3:
+    build: .
+    command: python collector_agent.py
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - SERVER_NAME=cache-server-3
 
   bot:
     build: .
