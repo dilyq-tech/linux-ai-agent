@@ -79,6 +79,18 @@
 
 ---
 
+---
+
+## 📸 Скриншоты
+
+| Веб-дашборд (графики метрик) | Telegram-бот (AI-анализ) |
+|:---:|:---:|
+| ![dashboard](screenshots/dashboard.png) | ![telegram](screenshots/telegram.jpg) |
+
+| AI-агент в терминале | Telegram-бот на ПК |
+|:---:|:---:|
+| ![agent](screenshots/agent.png) | ![desktop](screenshots/telegram-desktop.png) |
+
 ## 🚀 Быстрый старт
 
 ### 1. Установи Ollama и модель
