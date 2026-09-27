@@ -15,6 +15,7 @@ services:
     volumes:
       - ./monitoring.db:/app/monitoring.db
       - ./config.py:/app/config.py:ro
+      - /tmp/log_analysis.txt:/tmp/log_analysis.txt:ro
 
   web:
     build: .

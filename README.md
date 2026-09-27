@@ -186,7 +186,7 @@ sudo systemctl enable --now bot.service
 
 - [x] 🐳 Docker-упаковка (collector + bot + ollama одной командой)
 - [x] 📊 Веб-дашборд с графиками (FastAPI + Chart.js)
-- [ ] 🔍 Анализ логов на аномалии
+- [x] 🔍 Анализ логов на аномалии
 - [ ] 🌐 Мульти-серверный мониторинг
 
 ---

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-AI-Sysadmin: Telegram-бот с авто-алертами и офлайн-очередью
-Без сети алерты копятся в SQLite, при появлении сети (VPN) доставляются сами
+AI-Sysadmin: Telegram-бот с авто-алертами, офлайн-очередью и анализом логов
 """
 
 import sqlite3
@@ -19,12 +18,13 @@ apihelper.proxy = {"https": "http://127.0.0.1:12334"}
 DB_NAME = "monitoring.db"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "qwen2.5:3b"
+LOG_FILE = "/tmp/log_analysis.txt"
 
 DISK_THRESHOLD = 85
 RAM_THRESHOLD = 90
 CPU_THRESHOLD = 95
-CHECK_INTERVAL = 300     # проверка метрик: 5 минут
-SENDER_INTERVAL = 30    # попытка отправить очередь: 30 секунд
+CHECK_INTERVAL = 300
+SENDER_INTERVAL = 30
 
 bot = telebot.TeleBot(BOT_TOKEN)
 alert_state = {"disk": False, "ram": False, "cpu": False, "collector": False}
@@ -45,7 +45,6 @@ def init_queue():
 
 
 def queue_alert(text):
-    """Положить алерт в очередь (работает без сети)"""
     conn = sqlite3.connect(DB_NAME)
     conn.execute("INSERT INTO alert_queue (text, created_at, sent) VALUES (?, ?, 0)",
                  (text, datetime.now().isoformat()))
@@ -55,7 +54,6 @@ def queue_alert(text):
 
 
 def sender_loop():
-    """Фоновый поток: пытается отправить очередь каждые 30 сек"""
     while True:
         try:
             conn = sqlite3.connect(DB_NAME)
@@ -69,7 +67,7 @@ def sender_loop():
                 conn.close()
                 print("📤 Алерт доставлен:", text)
         except Exception:
-            pass  # сети нет — попробуем через 30 сек
+            pass
         time.sleep(SENDER_INTERVAL)
 
 
@@ -119,6 +117,7 @@ def cmd_start(message):
         "Команды:\n"
         "/status - текущие метрики\n"
         "/trend - AI-анализ трендов\n"
+        "/logs - последний анализ системных логов\n"
         "/test_alert - тестовый алерт\n"
         "/queue - состояние очереди алертов\n"
         "/help - справка")
@@ -153,9 +152,22 @@ def cmd_trend(message):
     bot.send_message(message.chat.id, "AI-анализ трендов:\n\n" + analysis)
 
 
+@bot.message_handler(commands=["logs"])
+def cmd_logs(message):
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, "r") as f:
+            content = f.read()
+        if content.strip():
+            bot.send_message(message.chat.id, "📋 Последний анализ логов:\n\n" + content[:2000])
+        else:
+            bot.reply_to(message, "Файл анализа пуст. Подожди 10 минут.")
+    else:
+        bot.reply_to(message, "Анализ логов ещё не запускался. Подожди 10 минут.")
+
+
 @bot.message_handler(commands=["test_alert"])
 def cmd_test_alert(message):
-    queue_alert("⚠️ ТЕСТОВЫЙ АЛЕРТ: диск заполнен на 93%! (проверка очереди)")
+    queue_alert("️ ТЕСТОВЫЙ АЛЕРТ: диск заполнен на 93%! (проверка очереди)")
     bot.reply_to(message, "Алерт положен в очередь. Доставка в течение 30 сек, если есть сеть.")
 
 
@@ -177,6 +189,7 @@ def cmd_help(message):
         "Справка:\n"
         "/status - текущие метрики\n"
         "/trend - AI-анализ трендов\n"
+        "/logs - последний анализ системных логов\n"
         "/test_alert - тестовый алерт\n"
         "/queue - состояние очереди\n\n"
         "Алерты срабатывают когда:\n"
@@ -186,7 +199,6 @@ def cmd_help(message):
 
 
 def alert_checker():
-    """Фоновый поток: проверяет метрики и кладет алерты в очередь"""
     while True:
         time.sleep(CHECK_INTERVAL)
         row = get_latest_metrics()
@@ -219,7 +231,7 @@ def alert_checker():
             alert_state["ram"] = False
 
         if cpu >= CPU_THRESHOLD and not alert_state["cpu"]:
-            queue_alert("⚠️ CPU загружен на " + str(cpu) + "%! Порог: " + str(CPU_THRESHOLD) + "%")
+            queue_alert("️ CPU загружен на " + str(cpu) + "%! Порог: " + str(CPU_THRESHOLD) + "%")
             alert_state["cpu"] = True
         elif cpu < CPU_THRESHOLD:
             alert_state["cpu"] = False
