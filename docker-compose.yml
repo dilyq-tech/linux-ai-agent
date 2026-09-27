@@ -1,0 +1,17 @@
+services:
+  collector:
+    build: .
+    command: python collector.py
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./monitoring.db:/app/monitoring.db
+
+  bot:
+    build: .
+    command: python bot.py
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./monitoring.db:/app/monitoring.db
+      - ./config.py:/app/config.py:ro
