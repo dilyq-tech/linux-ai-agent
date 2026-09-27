@@ -25,37 +25,32 @@
 
 ## 🏗 Архитектура
 
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ server-1 │ │ server-2 │ │ server-3 │
-│ collector_ │ │ collector_ │ │ collector_ │
-│ agent.py │ │ agent.py │ │ agent.py │
-└──────┬───────┘ └──────┬───────┘ └──────┬───────┘
-│ HTTP POST /metrics (каждые 60 сек)
-▼ ▼ ▼
-┌─────────────────────────────────────────────────┐
-│ hub.py (FastAPI-хаб) │
-│ приём метрик от всех агентов │
-└──────┬──────────────────────────┬───────────────┘
-▼ ▼
-┌──────────────┐ ┌──────────────┐
-│ monitoring.db│ │ web.py │
-│ (SQLite) │ │ дашборд │
-│ метрики+ │ │ Chart.js │
-│ очередь │ │ :8000 │
-└──────┬───────┘ └──────────────┘
-▼
-┌──────────────┐ ┌──────────────┐
-│ bot.py │─────────▶│ Ollama │
-│ Telegram-бот │ анализ │ Qwen 2.5 │
-│ 30+ команд │ │ (локально) │
-└──────────────┘ └──────────────┘
+```mermaid
+flowchart TD
+    subgraph SERVERS ["Мониторимые серверы"]
+        S1["server-1 · collector_agent.py"]
+        S2["server-2 · collector_agent.py"]
+        S3["server-3 · collector_agent.py"]
+    end
 
----
+    HUB["hub.py — FastAPI-хаб"]
+    DB[("monitoring.db · SQLite")]
+    WEB["web.py — дашборд :8000"]
+    BOT["bot.py — Telegram-бот"]
+    AI["Ollama · Qwen 2.5"]
+    TG(["Telegram — алерты"])
 
-#
----
+    S1 -->|metrics · 60 сек| HUB
+    S2 -->|metrics · 60 сек| HUB
+    S3 -->|metrics · 60 сек| HUB
+    HUB --> DB
+    DB --> WEB
+    DB --> BOT
+    BOT -->|AI-анализ| AI
+    BOT --> TG
+```
 
-## ⚙️ Возможности
+# ⚙️ Возможности
 
 | Компонент | Что умеет |
 |---|---|
@@ -282,28 +277,24 @@ sudo systemctl enable --now bot.service
 
 ---
 
-## 📁 Структура проекта
-...
-  ├── collector_agent.py    # агент: сбор метрик → отправка на хаб
-  ├── hub.py                # FastAPI-хаб: приём метрик от агентов
-  ├── collector.py          # локальный сборщик метрик → SQLite
-  ├── web.py                # веб-дашборд (FastAPI + Chart.js)
-  ├── bot.py                # Telegram-бот: алерты + 30+ команд
-  ├── full_control.py       # полное управление Linux (whitelist)
-  ├── control_handlers.py   # обработчики команд и кнопок бота
-  ├── log_analyzer.py       # AI-анализ системных логов
-  ├── analyzer.py           # standalone AI-анализ трендов
-  ├── agent.py              # терминальный ИИ-агент (чат + команды)
-  ├── manager.py            # управление сервисами/процессами/пакетами
-  ├── config.py             # секреты (НЕ попадает в git)
-  ├── Dockerfile            # образ для Docker
-  ├── docker-compose.yml    # hub + агенты + web + bot
-  ├── requirements.txt      # зависимости
-  └── monitoring.db         # база метрик и очереди алертов
 
----
+# 📁 Структура проекта
 
-## 💡 Пример работы
+| 🧠 Ядро системы | 🎛 Управление Linux |
+|---|---|
+| `collector_agent.py` — агент: сбор метрик → хаб | `full_control.py` — полное управление (whitelist) |
+| `hub.py` — FastAPI-хаб: приём метрик от агентов | `control_handlers.py` — обработчики команд и кнопок |
+| `collector.py` — локальный сборщик → SQLite | `manager.py` — сервисы / процессы / пакеты |
+| `monitoring.db` — база метрик и очереди алертов | `log_analyzer.py` — AI-анализ системных логов |
+
+| 🌐 Интерфейсы | 🐳 Деплой |
+|---|---|
+| `bot.py` — Telegram-бот: алерты + 30+ команд | `Dockerfile` — образ для Docker |
+| `web.py` — веб-дашборд (FastAPI + Chart.js) | `docker-compose.yml` — hub + агенты + web + bot |
+| `agent.py` — терминальный ИИ-агент | systemd-юниты — автозапуск сервисов |
+| `analyzer.py` — standalone AI-анализ трендов | `config.py` — секреты (НЕ в git) |
+
+#💡 Пример работы
 
 **Терминальный агент:**
 
