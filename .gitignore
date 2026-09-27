@@ -5,3 +5,4 @@ __pycache__/
 .env.save
 ai monitoring/
 *.txt
+config.py
