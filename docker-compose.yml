@@ -1,50 +1,65 @@
+x-app: &app
+  image: ai-sysadmin:alpine
+  build:
+    context: .
+    target: runtime
+
 services:
   hub:
-    build: .
+    <<: *app
     command: python hub.py
-    network_mode: host
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9000), timeout=2).close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - monitoring_net
     volumes:
       - ./monitoring.db:/app/monitoring.db
 
   server-1:
-    build: .
+    <<: *app
     command: python collector_agent.py
-    network_mode: host
     restart: unless-stopped
+    depends_on:
+      hub:
+        condition: service_healthy
+    networks:
+      - monitoring_net
     environment:
-      - SERVER_NAME=web-server-1
-
-  server-2:
-    build: .
-    command: python collector_agent.py
-    network_mode: host
-    restart: unless-stopped
-    environment:
-      - SERVER_NAME=database-server-2
-
-  server-3:
-    build: .
-    command: python collector_agent.py
-    network_mode: host
-    restart: unless-stopped
-    environment:
-      - SERVER_NAME=cache-server-3
+      SERVER_NAME: web-server-1
+      HUB_URL: http://hub:9000/metrics
 
   bot:
-    build: .
+    <<: *app
+    image: ai-sysadmin:bot
+    build:
+      context: .
+      target: bot
     command: python bot.py
-    network_mode: host
     restart: unless-stopped
+    networks:
+      - monitoring_net
     volumes:
       - ./monitoring.db:/app/monitoring.db
       - ./config.py:/app/config.py:ro
       - /tmp/log_analysis.txt:/tmp/log_analysis.txt:ro
+      - /var/run/docker.sock:/var/run/docker.sock
 
   web:
-    build: .
+    <<: *app
     command: python -m uvicorn web:app --host 0.0.0.0 --port 8000
-    network_mode: host
     restart: unless-stopped
+    networks:
+      - monitoring_net
+    ports:
+      - "8000:8000" # Обязательно для доступа к веб-интерфейсу извне после смены сети
     volumes:
       - ./monitoring.db:/app/monitoring.db:ro
+
+# Общая пользовательская сеть
+networks:
+  monitoring_net:
+    driver: bridge

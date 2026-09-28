@@ -1,0 +1,5 @@
+requests
+psutil
+pyTelegramBotAPI
+fastapi
+uvicorn

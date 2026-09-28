@@ -12,7 +12,7 @@ import os
 import random
 from datetime import datetime
 
-HUB_URL = "http://localhost:9000/metrics"
+HUB_URL = os.environ.get('HUB_URL', "http://localhost:9000/metrics")
 SERVER_NAME = os.environ.get('SERVER_NAME', 'server-unknown')
 CHECK_INTERVAL = 60  # каждые 60 секунд
 

@@ -4,5 +4,5 @@ __pycache__/
 .env
 .env.save
 ai monitoring/
-*.txt
 config.py
+ключ/

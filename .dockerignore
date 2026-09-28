@@ -1,6 +1,11 @@
-venv
 .git
-__pycache__
-*.pyc
-monitoring.db
+venv/
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+*.env*
 config.py
+ключ/
+screenshots/
