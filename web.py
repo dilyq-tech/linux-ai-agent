@@ -1,429 +1,280 @@
-#!/usr/bin/env python3
-"""
-AI-Sysadmin: веб-дашборд с метриками всех серверов
-"""
-
-import sqlite3
+# web.py
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
-from datetime import datetime
+from database import get_latest_metrics, get_all_servers, get_metrics_history, get_unsent_alerts
+import uvicorn
+import threading
 
-DB_NAME = "monitoring.db"
-LOG_FILE = "/tmp/log_analysis.txt"
-app = FastAPI(title="AI-Sysadmin Dashboard")
+app = FastAPI()
 
-
-@app.get("/api/metrics")
-def get_metrics(server: str = None, limit: int = 100):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    
-    if server:
-        cur.execute("""
-            SELECT timestamp, cpu_percent, memory_percent, disk_percent, server_name 
-            FROM metrics 
-            WHERE server_name = ?
-            ORDER BY id DESC LIMIT ?
-        """, (server, limit))
-    else:
-        cur.execute("""
-            SELECT timestamp, cpu_percent, memory_percent, disk_percent, server_name 
-            FROM metrics 
-            ORDER BY id DESC LIMIT ?
-        """, (limit,))
-    
-    rows = cur.fetchall()
-    conn.close()
-    rows.reverse()
-    
-    return [{
-        "time": r[0][11:16],
-        "cpu": r[1],
-        "ram": r[2],
-        "disk": r[3],
-        "server": r[4]
-    } for r in rows]
-
-
-@app.get("/api/servers")
-def get_servers():
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT DISTINCT server_name FROM metrics ORDER BY server_name")
-    servers = [row[0] for row in cur.fetchall()]
-    conn.close()
-    return servers
-
-
-@app.get("/api/latest")
-def get_latest(server: str = None):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    
-    if server:
-        cur.execute("""
-            SELECT timestamp, cpu_percent, memory_percent, disk_percent, server_name
-            FROM metrics 
-            WHERE server_name = ?
-            ORDER BY id DESC LIMIT 1
-        """, (server,))
-    else:
-        cur.execute("""
-            SELECT timestamp, cpu_percent, memory_percent, disk_percent, server_name
-            FROM metrics 
-            ORDER BY id DESC LIMIT 1
-        """)
-    
-    row = cur.fetchone()
-    conn.close()
-    
-    if row:
-        return {
-            "time": row[0][11:16],
-            "cpu": row[1],
-            "ram": row[2],
-            "disk": row[3],
-            "server": row[4]
-        }
-    return None
-
-
-@app.get("/api/alerts")
-def get_alerts(limit: int = 20):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT created_at, text, sent FROM alert_queue ORDER BY id DESC LIMIT ?", (limit,))
-    rows = cur.fetchall()
-    conn.close()
-    return [{"time": r[0][11:16], "text": r[1], "sent": bool(r[2])} for r in rows]
-
-
-@app.get("/api/logs")
-def get_logs():
-    try:
-        with open(LOG_FILE, "r") as f:
-            return {"content": f.read()[:2000]}
-    except:
-        return {"content": "Анализ логов недоступен"}
-
-
-HTML = """
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI-Sysadmin Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { 
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
-    background: #0d1117; 
-    color: #e6edf3; 
-    padding: 20px;
-  }
-  .container { max-width: 1400px; margin: 0 auto; }
-  h1 { 
-    font-size: 28px; 
-    margin-bottom: 24px;
-    background: linear-gradient(135deg, #58a6ff, #3fb950);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  .server-selector {
-    margin-bottom: 24px;
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .server-btn {
-    background: #161b22;
-    border: 1px solid #30363d;
-    color: #e6edf3;
-    padding: 10px 20px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .server-btn:hover { background: #21262d; }
-  .server-btn.active { 
-    background: #238636; 
-    border-color: #2ea043;
-  }
-  .metrics-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 16px;
-    margin-bottom: 24px;
-  }
-  .metric-card {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 20px;
-    transition: transform 0.2s;
-  }
-  .metric-card:hover { transform: translateY(-2px); }
-  .metric-title {
-    font-size: 14px;
-    color: #8b949e;
-    margin-bottom: 8px;
-  }
-  .metric-value {
-    font-size: 32px;
-    font-weight: bold;
-    margin-bottom: 12px;
-  }
-  .metric-bar {
-    height: 8px;
-    background: #21262d;
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .metric-bar-fill {
-    height: 100%;
-    border-radius: 4px;
-    transition: width 0.5s;
-  }
-  .status-good { color: #3fb950; }
-  .status-warning { color: #f0883e; }
-  .status-critical { color: #f85149; }
-  .bar-good { background: linear-gradient(90deg, #3fb950, #2ea043); }
-  .bar-warning { background: linear-gradient(90deg, #f0883e, #d29922); }
-  .bar-critical { background: linear-gradient(90deg, #f85149, #da3633); }
-  .chart-container {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 24px;
-  }
-  .alerts-container {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 20px;
-  }
-  .alert-item {
-    padding: 12px;
-    border-left: 3px solid #30363d;
-    margin-bottom: 8px;
-    background: #0d1117;
-    border-radius: 4px;
-  }
-  .alert-sent { border-left-color: #3fb950; }
-  .alert-pending { border-left-color: #f0883e; }
-  .alert-time {
-    font-size: 12px;
-    color: #8b949e;
-    margin-bottom: 4px;
-  }
-  .alert-text { font-size: 14px; }
-  .logs-container {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 20px;
-    margin-top: 24px;
-    max-height: 400px;
-    overflow-y: auto;
-  }
-  .logs-content {
-    font-family: 'Courier New', monospace;
-    font-size: 12px;
-    white-space: pre-wrap;
-    color: #8b949e;
-  }
-  .section-title {
-    font-size: 20px;
-    margin-bottom: 16px;
-    color: #e6edf3;
-  }
-  .update-time {
-    text-align: right;
-    font-size: 12px;
-    color: #8b949e;
-    margin-top: 8px;
-  }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Sysadmin Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 20px; color: #4fc3f7; }
+        .server-buttons { margin-bottom: 20px; }
+        .server-btn {
+            background: #2d2d44;
+            color: #eee;
+            border: none;
+            padding: 10px 20px;
+            margin-right: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .server-btn.active { background: #4caf50; }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background: #2d2d44;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        .metric-card h3 { color: #aaa; margin-bottom: 10px; font-size: 14px; }
+        .metric-value { font-size: 32px; font-weight: bold; color: #4fc3f7; }
+        .section {
+            background: #2d2d44;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .section h2 { margin-bottom: 15px; color: #4fc3f7; }
+        .alert-item { 
+            padding: 10px; 
+            background: #3d3d5c; 
+            margin-bottom: 10px; 
+            border-radius: 5px;
+            border-left: 4px solid #ff5252;
+        }
+        #chart-container { height: 300px; }
+        .loading { color: #aaa; font-style: italic; }
+    </style>
 </head>
 <body>
-<div class="container">
-  <h1>🤖 AI-Sysadmin Dashboard</h1>
-  
-  <div class="server-selector" id="server-selector">
-    <button class="server-btn active" data-server="">Все серверы</button>
-  </div>
-  
-  <div class="metrics-grid" id="metrics">
-    <div class="metric-card">
-      <div class="metric-title">CPU</div>
-      <div class="metric-value" id="cpu-value">--</div>
-      <div class="metric-bar"><div class="metric-bar-fill" id="cpu-bar"></div></div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-title">RAM</div>
-      <div class="metric-value" id="ram-value">--</div>
-      <div class="metric-bar"><div class="metric-bar-fill" id="ram-bar"></div></div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-title">Disk</div>
-      <div class="metric-value" id="disk-value">--</div>
-      <div class="metric-bar"><div class="metric-bar-fill" id="disk-bar"></div></div>
-    </div>
-  </div>
-
-  <div class="chart-container">
-    <h2 class="section-title">📈 История метрик</h2>
-    <canvas id="chart" height="100"></canvas>
-    <div class="update-time" id="update-time">Обновлено: --</div>
-  </div>
-
-  <div class="alerts-container">
-    <h2 class="section-title">🚨 Последние алерты</h2>
-    <div id="alerts">Загрузка...</div>
-  </div>
-
-  <div class="logs-container">
-    <h2 class="section-title">🔍 AI-анализ логов</h2>
-    <div class="logs-content" id="logs">Загрузка...</div>
-  </div>
-</div>
-
-<script>
-let chart;
-let currentServer = '';
-const CPU_THRESHOLD = 95;
-const RAM_THRESHOLD = 90;
-const DISK_THRESHOLD = 85;
-
-function getStatus(value, threshold) {
-  if (value >= threshold) return 'critical';
-  if (value >= threshold * 0.8) return 'warning';
-  return 'good';
-}
-
-function updateMetrics(latest) {
-  if (!latest) return;
-  
-  ['cpu', 'ram', 'disk'].forEach(metric => {
-    const value = latest[metric];
-    const threshold = metric === 'cpu' ? CPU_THRESHOLD : metric === 'ram' ? RAM_THRESHOLD : DISK_THRESHOLD;
-    const status = getStatus(value, threshold);
+    <h1>🤖 AI-Sysadmin Dashboard</h1>
     
-    document.getElementById(`${metric}-value`).textContent = value.toFixed(1) + '%';
-    document.getElementById(`${metric}-value`).className = `metric-value status-${status}`;
-    
-    const bar = document.getElementById(`${metric}-bar`);
-    bar.style.width = value + '%';
-    bar.className = `metric-bar-fill bar-${status}`;
-  });
-  
-  document.getElementById('update-time').textContent = 'Обновлено: ' + latest.time + ' (' + (latest.server || 'все серверы') + ')';
-}
+    <div class="server-buttons" id="server-buttons">
+        <button class="server-btn active" onclick="selectServer('all')">Все серверы</button>
+    </div>
 
-async function loadServers() {
-  const servers = await (await fetch('/api/servers')).json();
-  const selector = document.getElementById('server-selector');
-  
-  servers.forEach(server => {
-    const btn = document.createElement('button');
-    btn.className = 'server-btn';
-    btn.textContent = server;
-    btn.dataset.server = server;
-    btn.onclick = () => selectServer(server);
-    selector.appendChild(btn);
-  });
-}
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <h3>CPU</h3>
+            <div class="metric-value" id="cpu-value">--</div>
+        </div>
+        <div class="metric-card">
+            <h3>RAM</h3>
+            <div class="metric-value" id="ram-value">--</div>
+        </div>
+        <div class="metric-card">
+            <h3>Disk</h3>
+            <div class="metric-value" id="disk-value">--</div>
+        </div>
+    </div>
 
-function selectServer(server) {
-  currentServer = server;
-  document.querySelectorAll('.server-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.server === server);
-  });
-  refresh();
-}
+    <div class="section">
+        <h2>📈 История метрик</h2>
+        <div id="chart-container">
+            <canvas id="metricsChart"></canvas>
+        </div>
+        <p style="margin-top: 10px; color: #aaa;">Обновлено: <span id="last-update">--</span></p>
+    </div>
 
-async function refresh() {
-  const latest = await (await fetch(`/api/latest${currentServer ? '?server=' + currentServer : ''}`)).json();
-  updateMetrics(latest);
-  
-  const m = await (await fetch(`/api/metrics?limit=100${currentServer ? '&server=' + currentServer : ''}`)).json();
-  const data = {
-    labels: m.map(x => x.time),
-    datasets: [
-      { 
-        label: 'CPU %', 
-        data: m.map(x => x.cpu), 
-        borderColor: '#58a6ff', 
-        backgroundColor: 'rgba(88,166,255,.1)', 
-        fill: true, 
-        tension: .4,
-        borderWidth: 2
-      },
-      { 
-        label: 'RAM %', 
-        data: m.map(x => x.ram), 
-        borderColor: '#3fb950', 
-        backgroundColor: 'rgba(63,185,80,.1)', 
-        fill: true, 
-        tension: .4,
-        borderWidth: 2
-      },
-      { 
-        label: 'Disk %', 
-        data: m.map(x => x.disk), 
-        borderColor: '#f0883e', 
-        backgroundColor: 'rgba(240,136,62,.1)', 
-        fill: true, 
-        tension: .4,
-        borderWidth: 2
-      }
-    ]
-  };
-  
-  if (chart) { 
-    chart.data = data; 
-    chart.update(); 
-  } else { 
-    chart = new Chart(document.getElementById('chart'), { 
-      type: 'line', 
-      data,
-      options: {
-        responsive: true,
-        plugins: {
-          legend: { labels: { color: '#e6edf3' } }
-        },
-        scales: {
-          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
-          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, max: 100 }
+    <div class="section">
+        <h2>🚨 Последние алерты</h2>
+        <div id="alerts-list">
+            <p class="loading">Загрузка...</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🧠 AI-анализ логов</h2>
+        <div id="ai-analysis">
+            <p class="loading">Загрузка...</p>
+        </div>
+    </div>
+
+    <script>
+        let currentServer = 'all';
+        let chart;
+
+        async function loadServers() {
+            const response = await fetch('/api/servers');
+            const servers = await response.json();
+            const container = document.getElementById('server-buttons');
+            servers.forEach(server => {
+                const btn = document.createElement('button');
+                btn.className = 'server-btn';
+                btn.textContent = server;
+                btn.onclick = () => selectServer(server);
+                container.appendChild(btn);
+            });
         }
-      }
-    }); 
-  }
-  
-  const a = await (await fetch('/api/alerts')).json();
-  document.getElementById('alerts').innerHTML = a.length
-    ? a.map(x => `<div class="alert-item alert-${x.sent ? 'sent' : 'pending'}">
-        <div class="alert-time">${x.time}</div>
-        <div class="alert-text">${x.sent ? '✅' : ''} ${x.text}</div>
-      </div>`).join('')
-    : '<div style="color: #8b949e;">Алертов нет — серверы здоровы</div>';
-  
-  const logs = await (await fetch('/api/logs')).json();
-  document.getElementById('logs').textContent = logs.content || 'Анализ недоступен';
-}
 
-loadServers();
-refresh();
-setInterval(refresh, 30000);
-</script>
+        async function updateMetrics() {
+            const url = currentServer === 'all' ? '/api/latest' : `/api/latest/${currentServer}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data) {
+                document.getElementById('cpu-value').textContent = data.cpu_percent.toFixed(1) + '%';
+                document.getElementById('ram-value').textContent = data.ram_percent.toFixed(1) + '%';
+                document.getElementById('disk-value').textContent = data.disk_percent.toFixed(1) + '%';
+                document.getElementById('last-update').textContent = data.timestamp;
+            }
+        }
+
+        async function updateChart() {
+            const url = currentServer === 'all' ? '/api/history' : `/api/history/${currentServer}`;
+            const response = await fetch(url);
+            const history = await response.json();
+            
+            const labels = history.map(m => {
+                const date = new Date(m.timestamp);
+                return date.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+            });
+            const cpuData = history.map(m => m.cpu_percent);
+            const ramData = history.map(m => m.ram_percent);
+            const diskData = history.map(m => m.disk_percent);
+
+            if (chart) chart.destroy();
+            
+            const ctx = document.getElementById('metricsChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'CPU %', data: cpuData, borderColor: '#4fc3f7', fill: false },
+                        { label: 'RAM %', data: ramData, borderColor: '#81c784', fill: false },
+                        { label: 'Disk %', data: diskData, borderColor: '#ffb74d', fill: false }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, max: 100, grid: { color: '#3d3d5c' } },
+                        x: { grid: { color: '#3d3d5c' } }
+                    }
+                }
+            });
+        }
+
+        async function updateAlerts() {
+            const response = await fetch('/api/alerts');
+            const alerts = await response.json();
+            const container = document.getElementById('alerts-list');
+            
+            if (alerts.length === 0) {
+                container.innerHTML = '<p style="color: #81c784;">✅ Нет активных алертов</p>';
+            } else {
+                container.innerHTML = alerts.map(a => 
+                    `<div class="alert-item">${a.text}</div>`
+                ).join('');
+            }
+        }
+
+        async function updateAI() {
+            const response = await fetch('/api/ai-analysis');
+            const data = await response.json();
+            document.getElementById('ai-analysis').innerHTML = 
+                `<p>${data.analysis || 'Анализ недоступен'}</p>`;
+        }
+
+        function selectServer(server) {
+            currentServer = server;
+            document.querySelectorAll('.server-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent === server || (server === 'all' && btn.textContent === 'Все серверы'));
+            });
+            updateMetrics();
+            updateChart();
+        }
+
+        // Загрузка при старте
+        loadServers();
+        updateMetrics();
+        updateChart();
+        updateAlerts();
+        updateAI();
+
+        // Автообновление каждые 30 секунд
+        setInterval(() => {
+            updateMetrics();
+            updateChart();
+            updateAlerts();
+        }, 30000);
+    </script>
 </body>
 </html>
 """
 
-
 @app.get("/", response_class=HTMLResponse)
-def index():
-    return HTML
+async def dashboard():
+    return HTML_TEMPLATE
+
+@app.get("/api/servers")
+async def api_servers():
+    return get_all_servers()
+
+@app.get("/api/latest")
+@app.get("/api/latest/{server_name}")
+async def api_latest(server_name: str = None):
+    metrics = get_latest_metrics(server_name)
+    if metrics:
+        return dict(metrics)
+    return None
+
+@app.get("/api/history")
+@app.get("/api/history/{server_name}")
+async def api_history(server_name: str = None, limit: int = 20):
+    if server_name:
+        history = get_metrics_history(server_name, limit)
+    else:
+        # Берём историю первого сервера
+        servers = get_all_servers()
+        if servers:
+            history = get_metrics_history(servers[0], limit)
+        else:
+            history = []
+    return [dict(m) for m in history]
+
+@app.get("/api/alerts")
+async def api_alerts():
+    alerts = get_unsent_alerts(limit=10)
+    return [dict(a) for a in alerts]
+
+@app.get("/api/ai-analysis")
+async def api_ai_analysis():
+    from ai_analyzer import analyze_metrics
+    servers = get_all_servers()
+    if servers:
+        history = get_metrics_history(servers[0], limit=10)
+        analysis = analyze_metrics(history)
+        return {"analysis": analysis}
+    return {"analysis": "Нет данных"}
+
+def start_web():
+    """Запускает веб-сервер"""
+    uvicorn.run(app, host="0.0.0.0", port=8001)
+
+if __name__ == "__main__":
+    start_web()

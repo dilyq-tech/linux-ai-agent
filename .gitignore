@@ -4,5 +4,8 @@ __pycache__/
 .env
 .env.save
 ai monitoring/
-config.py
-ключ/
+ключ/friend_*.txt
+fake_malware.sh
+obfuscated_malware.b64
+screenshots/
+*.backup
