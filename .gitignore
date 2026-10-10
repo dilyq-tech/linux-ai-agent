@@ -9,3 +9,5 @@ fake_malware.sh
 obfuscated_malware.b64
 screenshots/
 *.backup
+ключ/
+*.txt
